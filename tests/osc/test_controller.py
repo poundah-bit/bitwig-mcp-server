@@ -1,9 +1,11 @@
 """Tests for the BitwigOSCController class"""
 
+import errno
 import unittest
 from unittest.mock import MagicMock, patch
 
 from bitwig_mcp_server.osc.controller import BitwigOSCController
+from bitwig_mcp_server.osc.exceptions import ConnectionError
 
 
 class TestBitwigOSCController(unittest.TestCase):
@@ -39,6 +41,38 @@ class TestBitwigOSCController(unittest.TestCase):
         # Test stop
         self.controller.stop()
         self.mock_server.stop.assert_called_once()
+
+    def test_start_send_only_when_port_in_use(self):
+        """A taken receive port starts the controller in send-only mode"""
+        port_in_use = OSError(errno.EADDRINUSE, "Address already in use")
+        self.mock_server.start.side_effect = port_in_use
+
+        self.controller.start()
+
+        self.assertTrue(self.controller.send_only)
+        self.assertTrue(self.controller.ready)
+        # No connection check: replies from Bitwig cannot be received
+        self.mock_client.refresh.assert_not_called()
+
+        # Commands are still sent
+        self.controller.client.set_tempo(120)
+        self.mock_client.set_tempo.assert_called_once_with(120)
+
+        # Anything that needs a reply fails fast with a clear message
+        self.assertFalse(self.controller.refresh())
+        with self.assertRaises(ConnectionError) as ctx:
+            self.controller.send_and_wait("/tempo/raw", 120)
+        self.assertIn("send-only mode", str(ctx.exception))
+
+    def test_start_other_os_error_still_fails(self):
+        """Other socket errors are not hidden by send-only mode"""
+        self.mock_server.start.side_effect = OSError(errno.EACCES, "Access denied")
+
+        with self.assertRaises(ConnectionError):
+            self.controller.start()
+
+        self.assertFalse(self.controller.send_only)
+        self.assertFalse(self.controller.ready)
 
     def test_context_manager(self):
         """Test context manager protocol"""

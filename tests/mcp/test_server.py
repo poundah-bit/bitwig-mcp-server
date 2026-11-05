@@ -163,3 +163,51 @@ async def test_read_resource_error(bitwig_mcp_server, mock_osc_controller):
         assert "Failed to read resource test://uri: Resource error" in str(
             excinfo.value
         )
+
+
+@pytest.mark.asyncio
+async def test_run_server_serves_stdio():
+    """run_server starts the controller, then serves MCP over stdio."""
+    from contextlib import asynccontextmanager
+
+    from bitwig_mcp_server.mcp.server import run_server
+
+    read_stream, write_stream = MagicMock(), MagicMock()
+
+    @asynccontextmanager
+    async def fake_stdio_server():
+        yield read_stream, write_stream
+
+    with (
+        patch("bitwig_mcp_server.mcp.server.BitwigMCPServer") as server_cls,
+        patch("bitwig_mcp_server.mcp.server.stdio_server", fake_stdio_server),
+    ):
+        server = server_cls.return_value
+        server.start = AsyncMock()
+        server.stop = AsyncMock()
+        server.mcp_server.run = AsyncMock()
+
+        await run_server()
+
+        server.start.assert_awaited_once()
+        server.mcp_server.run.assert_awaited_once_with(
+            read_stream,
+            write_stream,
+            server.mcp_server.create_initialization_options.return_value,
+        )
+        server.stop.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_read_resource_send_only(bitwig_mcp_server, mock_osc_controller):
+    """Resources explain why state is unavailable in send-only mode."""
+    mock_osc_controller.send_only = True
+    mock_osc_controller.receive_port = 9000
+    mock_read_resource = AsyncMock()
+
+    with patch("bitwig_mcp_server.mcp.resources.read_resource", mock_read_resource):
+        with pytest.raises(ValueError) as excinfo:
+            await bitwig_mcp_server.read_resource("bitwig://transport")
+
+    assert "send-only mode" in str(excinfo.value)
+    mock_read_resource.assert_not_called()

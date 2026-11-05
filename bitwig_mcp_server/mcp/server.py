@@ -9,9 +9,10 @@ import logging
 from typing import Any, List, Optional
 
 from mcp.server import Server as MCPServer
+from mcp.server.stdio import stdio_server
 from mcp.types import TextContent
 
-from bitwig_mcp_server.osc.controller import BitwigOSCController
+from bitwig_mcp_server.osc.controller import SEND_ONLY_MESSAGE, BitwigOSCController
 from bitwig_mcp_server.settings import Settings
 
 # Set up logging
@@ -129,6 +130,11 @@ class BitwigMCPServer:
         Raises:
             ValueError: If resource URI is unknown
         """
+        if getattr(self.controller, "send_only", False) is True:
+            raise ValueError(
+                f"Failed to read resource {uri}: {SEND_ONLY_MESSAGE.format(port=self.controller.receive_port)}"
+            )
+
         try:
             from bitwig_mcp_server.mcp.resources import read_resource
 
@@ -149,9 +155,13 @@ async def run_server(settings: Optional[Settings] = None) -> None:
     try:
         await server.start()
 
-        # Keep the server running
-        while True:
-            await asyncio.sleep(1)
+        # Serve MCP requests over stdin/stdout until the client disconnects
+        async with stdio_server() as (read_stream, write_stream):
+            await server.mcp_server.run(
+                read_stream,
+                write_stream,
+                server.mcp_server.create_initialization_options(),
+            )
     except asyncio.CancelledError:
         pass
     except KeyboardInterrupt:

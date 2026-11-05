@@ -4,6 +4,7 @@ Bitwig OSC Controller
 High-level controller that combines client and server functionality
 """
 
+import errno
 import logging
 import socket
 import time
@@ -20,6 +21,20 @@ from .exceptions import (
 from .server import BitwigOSCServer
 
 logger = logging.getLogger(__name__)
+
+SEND_ONLY_MESSAGE = (
+    "Running in send-only mode: another Bitwig MCP server instance already "
+    "receives Bitwig's feedback on port {port}. Commands are sent to Bitwig, "
+    "but its current state cannot be read from this instance."
+)
+
+
+def _is_port_in_use(error: OSError) -> bool:
+    """True if binding failed because another socket already uses the port"""
+    return (
+        error.errno == errno.EADDRINUSE
+        or getattr(error, "winerror", None) == 10048  # WSAEADDRINUSE
+    )
 
 
 class BitwigOSCController:
@@ -58,6 +73,9 @@ class BitwigOSCController:
         # Controller state
         self.ready = False
         self.connected = False
+        # True when the receive port is taken by another instance: commands
+        # are still sent, but no feedback from Bitwig is received.
+        self.send_only = False
         self.last_refresh = 0.0
         self.connection_attempts = 0
 
@@ -69,7 +87,16 @@ class BitwigOSCController:
         """
         try:
             # Start the OSC server
-            self.server.start()
+            try:
+                self.server.start()
+            except OSError as e:
+                if not _is_port_in_use(e):
+                    raise
+                self.send_only = True
+                self.ready = True
+                self.connected = True
+                logger.warning(SEND_ONLY_MESSAGE.format(port=self.receive_port))
+                return
 
             # Wait briefly for server to start
             time.sleep(0.1)
@@ -197,6 +224,9 @@ class BitwigOSCController:
         Returns:
             True if successful, False otherwise
         """
+        if self.send_only:
+            return False
+
         try:
             # Rate limit refreshes
             now = time.time()
@@ -277,6 +307,11 @@ class BitwigOSCController:
             TimeoutError: If the operation times out
             BitwigNotRespondingError: If Bitwig is not responding
         """
+        if self.send_only:
+            raise ConnectionError(
+                details=SEND_ONLY_MESSAGE.format(port=self.receive_port)
+            )
+
         # Ensure connection is healthy
         if not self.ready or not self.connected:
             if not self._attempt_reconnect():
@@ -321,6 +356,9 @@ class BitwigOSCController:
         Returns:
             True if successful, False otherwise
         """
+        if self.send_only:
+            return False
+
         if self.connection_attempts >= self.reconnect_attempts:
             logger.error("Maximum reconnection attempts reached")
             return False
