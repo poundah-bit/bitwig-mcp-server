@@ -340,7 +340,7 @@ def test_read_device_parameters_resource():
             return "Frequency"
         elif addr == "/device/param/1/value":
             return 64
-        elif addr == "/device/param/1/value/str":
+        elif addr == "/device/param/1/valueStr":
             return "1000 Hz"
         elif addr == "/device/param/2/exists":
             return 1
@@ -348,7 +348,7 @@ def test_read_device_parameters_resource():
             return "Gain"
         elif addr == "/device/param/2/value":
             return 32
-        elif addr == "/device/param/2/value/str":
+        elif addr == "/device/param/2/valueStr":
             return "+3 dB"
         elif addr.startswith("/device/param/"):
             return 0 if "/exists" in addr else None

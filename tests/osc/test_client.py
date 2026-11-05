@@ -32,6 +32,25 @@ class TestBitwigOSCClient(unittest.TestCase):
         self.client.play(False)
         self.client.client.send_message.assert_called_with("/play", 0)
 
+    def test_set_device_parameter_range(self):
+        """Device parameter values are integers in DrivenByMoss' 0-127 range"""
+        send = self.client.client.send_message
+
+        self.client.set_device_parameter(1, 127)
+        send.assert_called_with("/device/param/1/value", 127)
+
+        # 128 is out of range for a value resolution of 128 and gets clamped
+        self.client.set_device_parameter(1, 128)
+        send.assert_called_with("/device/param/1/value", 127)
+
+        self.client.set_device_parameter(2, -5)
+        send.assert_called_with("/device/param/2/value", 0)
+
+        # Floats are rounded to the integer values Bitwig expects
+        self.client.set_device_parameter(3, 63.6)
+        send.assert_called_with("/device/param/3/value", 64)
+        self.assertIsInstance(send.call_args.args[1], int)
+
     def test_device_controls(self):
         """Test device control methods"""
         # Test toggle device bypass

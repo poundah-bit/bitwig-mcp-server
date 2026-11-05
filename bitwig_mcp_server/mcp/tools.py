@@ -186,7 +186,7 @@ def get_bitwig_tools() -> List[Tool]:
                     },
                     "value": {
                         "type": "number",
-                        "description": "Parameter value (0-128)",
+                        "description": "Parameter value (0-127, 64 is center)",
                     },
                 },
                 "required": ["param_index", "value"],
@@ -532,8 +532,8 @@ async def execute_tool(
             if not isinstance(param_index, int) or param_index < 1:
                 raise ValueError("Invalid param_index: must be a positive integer")
 
-            if not isinstance(value, (int, float)) or value < 0 or value > 128:
-                raise ValueError("Invalid value: must be between 0 and 128")
+            if not isinstance(value, (int, float)) or value < 0 or value > 127:
+                raise ValueError("Invalid value: must be between 0 and 127")
 
             controller.client.set_device_parameter(param_index, value)
             return [

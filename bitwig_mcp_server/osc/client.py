@@ -261,7 +261,7 @@ class BitwigOSCClient:
 
         Args:
             param_index: Parameter index (1-based)
-            value: Parameter value (0-128)
+            value: Parameter value (0-127, rounded to an integer)
 
         Raises:
             InvalidParameterError: If parameters are invalid
@@ -280,7 +280,9 @@ class BitwigOSCClient:
         if param_index > 8:
             raise InvalidParameterError("param_index", param_index, "must be at most 8")
 
-        MAX_VALUE = 128
+        # DrivenByMoss accepts integers {0-MAX_VALUE}; with the default
+        # "Value resolution" of 128, MAX_VALUE is 127.
+        MAX_VALUE = 127
         MIN_VALUE = 0
 
         if not isinstance(value, (int, float)):
@@ -297,7 +299,7 @@ class BitwigOSCClient:
             )
             value = MAX_VALUE
 
-        self.send(f"/device/param/{param_index}/value", value)
+        self.send(f"/device/param/{param_index}/value", int(round(value)))
 
     def toggle_device_bypass(self) -> None:
         """Toggle bypass state of the currently selected device
