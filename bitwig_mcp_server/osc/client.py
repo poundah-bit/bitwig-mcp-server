@@ -301,6 +301,25 @@ class BitwigOSCClient:
 
         self.send(f"/device/param/{param_index}/value", int(round(value)))
 
+    def touch_device_parameter(self, param_index: int, touched: bool) -> None:
+        """Set the touched state of a device parameter
+
+        DrivenByMoss: /device/param/{1-8}/touched {0,1}
+
+        Args:
+            param_index: Parameter index (1-8)
+            touched: True to touch the parameter, False to release it
+
+        Raises:
+            InvalidParameterError: If param_index is invalid
+            ConnectionError: If unable to send the command
+        """
+        if not isinstance(param_index, int) or not 1 <= param_index <= 8:
+            raise InvalidParameterError(
+                "param_index", param_index, "must be an integer from 1 to 8"
+            )
+        self.send(f"/device/param/{param_index}/touched", 1 if touched else 0)
+
     def toggle_device_bypass(self) -> None:
         """Toggle bypass state of the currently selected device
 
@@ -329,7 +348,8 @@ class BitwigOSCClient:
                 "sibling_index", sibling_index, "must be between 1 and 8"
             )
 
-        self.send(f"/device/sibling/{sibling_index}/select", 1)
+        # DrivenByMoss: "/device/sibling/{1-8}/selected" (no value) selects it
+        self.send(f"/device/sibling/{sibling_index}/selected", None)
 
     def navigate_device(self, direction: str) -> None:
         """Navigate to next/previous device
@@ -387,6 +407,45 @@ class BitwigOSCClient:
             ConnectionError: If unable to send the command
         """
         self.send("/device/window", None)
+
+    # Parameter pages of the cursor device. DrivenByMoss shows the pages in
+    # windows of 8 slots (bank page size); preset pages come before the
+    # device's own pages.
+    def select_parameter_page(self, page_slot: int) -> None:
+        """Select a parameter page within the currently shown window of 8 pages
+
+        Args:
+            page_slot: Page slot in the current page window (1-8)
+
+        Raises:
+            InvalidParameterError: If page_slot is invalid
+            ConnectionError: If unable to send the command
+        """
+        if not isinstance(page_slot, int) or isinstance(page_slot, bool):
+            raise InvalidParameterError("page_slot", page_slot, "must be an integer")
+
+        if page_slot < 1 or page_slot > 8:
+            raise InvalidParameterError(
+                "page_slot", page_slot, "must be between 1 and 8"
+            )
+
+        self.send("/device/page/selected", page_slot)
+
+    def next_parameter_page(self) -> None:
+        """Select the next parameter page of the cursor device"""
+        self.send("/device/param/+", None)
+
+    def previous_parameter_page(self) -> None:
+        """Select the previous parameter page of the cursor device"""
+        self.send("/device/param/-", None)
+
+    def next_parameter_page_bank(self) -> None:
+        """Jump 8 parameter pages forward"""
+        self.send("/device/param/bank/page/+", None)
+
+    def previous_parameter_page_bank(self) -> None:
+        """Jump 8 parameter pages back"""
+        self.send("/device/param/bank/page/-", None)
 
     def select_device_by_index(self, device_index: int) -> None:
         """Select a device by its index

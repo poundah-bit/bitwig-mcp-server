@@ -558,9 +558,7 @@ def _read_device_parameters_resource(controller: BitwigOSCController) -> str:
             if param_exists:
                 param_name = controller.server.get_message(f"/device/param/{i}/name")
                 param_value = controller.server.get_message(f"/device/param/{i}/value")
-                value_str = controller.server.get_message(
-                    f"/device/param/{i}/valueStr"
-                )
+                value_str = controller.server.get_message(f"/device/param/{i}/valueStr")
 
                 param_info = f"  {i}: {param_name} = {param_value}"
                 if value_str:

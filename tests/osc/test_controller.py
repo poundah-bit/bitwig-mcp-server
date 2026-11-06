@@ -30,6 +30,14 @@ class TestBitwigOSCController(unittest.TestCase):
 
             self.controller = BitwigOSCController()
 
+        # Never open real sockets for state sharing in these tests
+        share_patcher = patch("bitwig_mcp_server.osc.controller.StateShareServer")
+        mirror_patcher = patch("bitwig_mcp_server.osc.controller.RemoteOSCState")
+        self.mock_share_class = share_patcher.start()
+        self.mock_mirror_class = mirror_patcher.start()
+        self.addCleanup(share_patcher.stop)
+        self.addCleanup(mirror_patcher.stop)
+
     def test_start_stop(self):
         """Test starting and stopping controller"""
         # Test start
@@ -38,18 +46,49 @@ class TestBitwigOSCController(unittest.TestCase):
         self.mock_client.refresh.assert_called_once()
         self.assertTrue(self.controller.ready)
 
+        # The port owner shares its state on receive_port + 1
+        self.mock_share_class.assert_called_once_with(
+            self.mock_server, "127.0.0.1", 9001
+        )
+        share = self.mock_share_class.return_value
+        share.start.assert_called_once()
+        self.assertFalse(self.controller.mirroring)
+
         # Test stop
         self.controller.stop()
         self.mock_server.stop.assert_called_once()
+        share.stop.assert_called_once()
+
+    def test_start_mirrors_owner_when_port_in_use(self):
+        """A taken receive port makes the controller mirror the owner's state"""
+        self.mock_server.start.side_effect = OSError(
+            errno.EADDRINUSE, "Address already in use"
+        )
+        mirror = self.mock_mirror_class.return_value
+        mirror.received_messages = {"/tempo/raw": 120}
+
+        self.controller.start()
+
+        self.mock_mirror_class.assert_called_once_with("127.0.0.1", 9000, 9001)
+        mirror.start.assert_called_once()
+        self.assertIs(self.controller.server, mirror)
+        self.assertTrue(self.controller.mirroring)
+        self.assertFalse(self.controller.send_only)
+        self.assertTrue(self.controller.ready)
+        # The usual connection check runs against the mirrored state
+        self.mock_client.refresh.assert_called_once()
+        self.mock_share_class.assert_not_called()
 
     def test_start_send_only_when_port_in_use(self):
-        """A taken receive port starts the controller in send-only mode"""
+        """Without a reachable owner the controller falls back to send-only"""
         port_in_use = OSError(errno.EADDRINUSE, "Address already in use")
         self.mock_server.start.side_effect = port_in_use
+        self.mock_mirror_class.return_value.start.side_effect = OSError("not reachable")
 
         self.controller.start()
 
         self.assertTrue(self.controller.send_only)
+        self.assertFalse(self.controller.mirroring)
         self.assertTrue(self.controller.ready)
         # No connection check: replies from Bitwig cannot be received
         self.mock_client.refresh.assert_not_called()

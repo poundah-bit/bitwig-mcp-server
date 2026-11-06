@@ -60,7 +60,7 @@ class TestBitwigOSCClient(unittest.TestCase):
         # Test select device sibling
         self.client.select_device_sibling(3)
         self.client.client.send_message.assert_called_with(
-            "/device/sibling/3/select", 1
+            "/device/sibling/3/selected", None
         )
 
         # Test select device by index

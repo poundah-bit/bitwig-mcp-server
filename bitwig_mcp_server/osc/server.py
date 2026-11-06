@@ -72,6 +72,10 @@ class BitwigOSCServer:
         self.port = port
         self.running = False
         self.received_messages: dict[str, Any] = {}
+        # Version of the last message per address, for state sharing
+        self.version = 0
+        self.versions: dict[str, int] = {}
+        self._lock = threading.Lock()
         self.server: Optional[ThreadingOSCUDPServer] = None
         self.server_thread: Optional[threading.Thread] = None
 
@@ -96,14 +100,33 @@ class BitwigOSCServer:
         """Default handler for all OSC messages from Bitwig"""
         timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
 
-        # Store the received message for later retrieval
-        if args and len(args) > 0:
-            value = args[0]
+        value = args[0] if args else None
+
+        # Store the received message for later retrieval, with a version
+        # number so other server instances can fetch only what changed
+        with self._lock:
+            self.version += 1
             self.received_messages[address] = value
-            logger.debug(f"[{timestamp}] Received: {address} = {value}")
-        else:
-            self.received_messages[address] = None
-            logger.debug(f"[{timestamp}] Received: {address} (no value)")
+            self.versions[address] = self.version
+
+        logger.debug(f"[{timestamp}] Received: {address} = {value}")
+
+    def changes_since(self, since: int) -> tuple[int, dict[str, Any]]:
+        """Return the current version and all messages received after `since`
+
+        Args:
+            since: Version from a previous call (0 for everything)
+
+        Returns:
+            Tuple of the current version and the changed messages
+        """
+        with self._lock:
+            changed = {
+                address: self.received_messages.get(address)
+                for address, version in self.versions.items()
+                if version > since
+            }
+            return self.version, changed
 
     def start(self) -> None:
         """Start the OSC server"""
@@ -184,4 +207,6 @@ class BitwigOSCServer:
 
     def clear_messages(self) -> None:
         """Clear all stored messages"""
-        self.received_messages.clear()
+        with self._lock:
+            self.received_messages.clear()
+            self.versions.clear()

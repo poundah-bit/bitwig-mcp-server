@@ -29,6 +29,8 @@ class Settings(BaseSettings):
         bitwig_host (str): The hostname or IP address of the Bitwig Studio instance.
         bitwig_send_port (int): The port to send OSC messages to Bitwig.
         bitwig_receive_port (int): The port to receive OSC messages from Bitwig.
+        bitwig_state_port (int): The local port for sharing Bitwig's state
+            between server instances.
         mcp_port (int): The port for the MCP server's HTTP/SSE transport.
     """
 
@@ -51,6 +53,13 @@ class Settings(BaseSettings):
     )
     bitwig_receive_port: int = Field(
         default=9000, description="Port to receive OSC messages from Bitwig"
+    )
+    bitwig_state_port: int = Field(
+        default=9001,
+        description=(
+            "Local port on which the instance that receives Bitwig's OSC "
+            "feedback shares the state with other server instances"
+        ),
     )
 
     # MCP settings

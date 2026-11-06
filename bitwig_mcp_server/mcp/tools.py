@@ -4,6 +4,7 @@ Bitwig MCP Tools
 This module provides MCP tools for controlling Bitwig Studio.
 """
 
+import asyncio
 import logging
 import os
 from pathlib import Path
@@ -16,6 +17,67 @@ from bitwig_mcp_server.utils.device_recommender import BitwigDeviceRecommender
 
 # Set up logging
 logger = logging.getLogger(__name__)
+
+# Parameter page navigation tools: tool name -> (client method, result text)
+PARAMETER_PAGE_NAVIGATION = {
+    "next_parameter_page": ("next_parameter_page", "Selected next parameter page"),
+    "previous_parameter_page": (
+        "previous_parameter_page",
+        "Selected previous parameter page",
+    ),
+    "next_parameter_page_bank": (
+        "next_parameter_page_bank",
+        "Jumped 8 parameter pages forward",
+    ),
+    "previous_parameter_page_bank": (
+        "previous_parameter_page_bank",
+        "Jumped 8 parameter pages back",
+    ),
+}
+
+
+def format_parameter_outcome(outcome: Dict[str, Any]) -> str:
+    """Format the result of BitwigOSCController.set_device_parameter_verified"""
+    index = outcome["index"]
+    label = f"{index} ({outcome['name']})" if outcome.get("name") else f"{index}"
+    target = outcome["target"]
+
+    if not outcome["verified"]:
+        return (
+            f"Device parameter {label} set to {target} "
+            "(not verified: no feedback from Bitwig available)"
+        )
+    if outcome["applied"]:
+        shown = f" = {outcome['value_str']}" if outcome.get("value_str") else ""
+        return f"Device parameter {label} set to {outcome['after']}{shown}"
+    shown = f" ({outcome['value_str']})" if outcome.get("value_str") else ""
+    return (
+        f"Warning: Bitwig did not apply the value {target} to device parameter "
+        f"{label}; it is still {outcome['after']}{shown}. Bitwig ignores "
+        "parameter changes in some situations, e.g. when the parameter is "
+        "automated or locked. Check the parameter in Bitwig and try again."
+    )
+
+
+def format_parameter_page_info(info: Dict[str, Any]) -> str:
+    """Format the result of BitwigOSCController.get_parameter_page_info"""
+    selected = info.get("selected_slot")
+    lines = [
+        f"Device: {info.get('device')}",
+        f"Selected page: slot {selected if selected is not None else '?'}"
+        f" - {info.get('selected_name')}",
+        "Pages in current window:",
+    ]
+    for page in info.get("pages", []):
+        marker = "*" if page["selected"] else " "
+        lines.append(f" {marker} {page['slot']}: {page['name']}")
+    lines.append("Parameters:")
+    for param in info.get("params", []):
+        if param["exists"]:
+            lines.append(f"   {param['index']}: {param['name']} = {param['value_str']}")
+        else:
+            lines.append(f"   {param['index']}: (none)")
+    return "\n".join(lines)
 
 
 def get_bitwig_tools() -> List[Tool]:
@@ -188,6 +250,14 @@ def get_bitwig_tools() -> List[Tool]:
                         "type": "number",
                         "description": "Parameter value (0-127, 64 is center)",
                     },
+                    "automation_touch": {
+                        "type": "boolean",
+                        "description": (
+                            "Touch the parameter while setting it, like a "
+                            "hardware knob (default: true)"
+                        ),
+                        "default": True,
+                    },
                 },
                 "required": ["param_index", "value"],
             },
@@ -228,6 +298,58 @@ def get_bitwig_tools() -> List[Tool]:
                 },
                 "required": ["direction"],
             },
+        ),
+        Tool(
+            name="select_parameter_page",
+            description=(
+                "Select a parameter page of the selected device. Pages are shown "
+                "in windows of 8: 'page' is the slot (1-8) in the current window "
+                "as listed by get_parameter_page_info. Preset pages come before "
+                "the device's own pages. Use next_parameter_page_bank to reach "
+                "pages beyond the current window."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "page": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 8,
+                        "description": "Page slot in the current window (1-8)",
+                    },
+                },
+                "required": ["page"],
+            },
+        ),
+        Tool(
+            name="next_parameter_page",
+            description="Select the next parameter page of the selected device",
+            inputSchema={"type": "object", "properties": {}},
+        ),
+        Tool(
+            name="previous_parameter_page",
+            description="Select the previous parameter page of the selected device",
+            inputSchema={"type": "object", "properties": {}},
+        ),
+        Tool(
+            name="next_parameter_page_bank",
+            description="Jump 8 parameter pages forward on the selected device",
+            inputSchema={"type": "object", "properties": {}},
+        ),
+        Tool(
+            name="previous_parameter_page_bank",
+            description="Jump 8 parameter pages back on the selected device",
+            inputSchema={"type": "object", "properties": {}},
+        ),
+        Tool(
+            name="get_parameter_page_info",
+            description=(
+                "Show the selected parameter page of the selected device, the "
+                "page slots in the current window of 8 pages, and the name and "
+                "displayed value of the 8 parameters that set_device_parameter "
+                "controls"
+            ),
+            inputSchema={"type": "object", "properties": {}},
         ),
         Tool(
             name="enter_device_layer",
@@ -535,12 +657,18 @@ async def execute_tool(
             if not isinstance(value, (int, float)) or value < 0 or value > 127:
                 raise ValueError("Invalid value: must be between 0 and 127")
 
-            controller.client.set_device_parameter(param_index, value)
-            return [
-                TextContent(
-                    type="text", text=f"Device parameter {param_index} set to {value}"
-                )
-            ]
+            automation_touch = arguments.get("automation_touch", True)
+            if not isinstance(automation_touch, bool):
+                raise ValueError("Invalid automation_touch: must be true or false")
+
+            # Waits briefly for Bitwig's feedback, so run it off the event loop
+            outcome = await asyncio.to_thread(
+                controller.set_device_parameter_verified,
+                param_index,
+                value,
+                automation_touch=automation_touch,
+            )
+            return [TextContent(type="text", text=format_parameter_outcome(outcome))]
 
         elif name == "toggle_device_bypass":
             controller.client.toggle_device_bypass()
@@ -577,6 +705,35 @@ async def execute_tool(
 
             controller.client.navigate_device(direction)
             return [TextContent(type="text", text=f"Navigated to {direction} device")]
+
+        elif name == "select_parameter_page":
+            page = arguments.get("page")
+
+            if page is None:
+                raise ValueError("Missing required argument: page")
+
+            if (
+                not isinstance(page, int)
+                or isinstance(page, bool)
+                or not 1 <= page <= 8
+            ):
+                raise ValueError("Invalid page: must be an integer between 1 and 8")
+
+            controller.client.select_parameter_page(page)
+            return [
+                TextContent(type="text", text=f"Selected parameter page slot {page}")
+            ]
+
+        elif name in PARAMETER_PAGE_NAVIGATION:
+            method_name, message = PARAMETER_PAGE_NAVIGATION[name]
+            getattr(controller.client, method_name)()
+            return [TextContent(type="text", text=message)]
+
+        elif name == "get_parameter_page_info":
+            # Give Bitwig a moment to report a page change sent just before
+            await asyncio.sleep(0.3)
+            info = controller.get_parameter_page_info()
+            return [TextContent(type="text", text=format_parameter_page_info(info))]
 
         elif name == "enter_device_layer":
             layer_index = arguments.get("layer_index")

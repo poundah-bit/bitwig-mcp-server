@@ -39,6 +39,7 @@ class BitwigMCPServer:
             self.settings.bitwig_host,
             self.settings.bitwig_send_port,
             self.settings.bitwig_receive_port,
+            state_port=self.settings.bitwig_state_port,
         )
 
         # Set up handlers
